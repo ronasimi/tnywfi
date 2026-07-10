@@ -317,6 +317,13 @@ class WifiWindow(Gtk.Window):
         
         self.client.connect("notify::active-connections", lambda *args: self.update_status())
         GLib.timeout_add_seconds(3, self.update_status)
+        self.connect("key-press-event", self.on_key_press)
+
+    def on_key_press(self, widget, event):
+        if event.keyval == Gdk.KEY_Escape:
+            self.destroy()
+            return True
+        return False
 
     def _apply_css(self):
         css = b"""
@@ -345,6 +352,13 @@ class WifiWindow(Gtk.Window):
         }
         #network-list row:hover { 
             background-color: #3d3d3d; 
+        }
+        .band-tag {
+            color: #b8c0cc;
+            font-size: 0.72em;
+            font-style: italic;
+            margin-left: 4px;
+            opacity: 0.9;
         }
         """
         provider = Gtk.CssProvider()
@@ -436,30 +450,42 @@ class WifiWindow(Gtk.Window):
     def refresh_available_networks(self):
         for row in self.listbox.get_children():
             self.listbox.remove(row)
-            
+
         dev = self._get_wifi_device()
         if not dev:
             return
-            
+
+        self._populate_network_rows(dev)
+
         try:
-            dev.request_scan_async(None, lambda *args: None, None)
+            dev.request_scan_async(None, self._on_scan_completed, dev)
         except Exception:
-            pass 
-        
+            pass
+
+    def _on_scan_completed(self, dev, result, user_data):
+        try:
+            dev.request_scan_finish(result)
+        except Exception:
+            pass
+        GLib.idle_add(self._populate_network_rows, dev)
+
+    def _populate_network_rows(self, dev):
         aps = dev.get_access_points()
         seen_ssids = set()
         ap_list = []
-        
+
         for ap in aps:
             ssid_b = ap.get_ssid()
-            if not ssid_b: continue
+            if not ssid_b:
+                continue
             ssid = ssid_b.get_data().decode('utf-8', errors='ignore')
-            if not ssid or ssid in seen_ssids: continue
+            if not ssid or ssid in seen_ssids:
+                continue
             seen_ssids.add(ssid)
             ap_list.append(ap)
-            
+
         ap_list.sort(key=lambda x: x.get_strength(), reverse=True)
-        
+
         active_ssid = None
         if dev.get_state() == NM.DeviceState.ACTIVATED:
             active_ap = dev.get_active_access_point()
@@ -467,16 +493,20 @@ class WifiWindow(Gtk.Window):
                 ssid_b = active_ap.get_ssid()
                 if ssid_b:
                     active_ssid = ssid_b.get_data().decode('utf-8', errors='ignore')
-        
+
+        for row in self.listbox.get_children():
+            self.listbox.remove(row)
+
         for ap in ap_list:
             ssid_b = ap.get_ssid()
             ssid = ssid_b.get_data().decode('utf-8', errors='ignore')
-            if ssid == active_ssid: continue
-                
+            if ssid == active_ssid:
+                continue
+
             strength = ap.get_strength()
             flags = ap.get_wpa_flags() | ap.get_rsn_flags()
             is_secure = flags != 0
-            
+
             existing_conn = None
             for conn in self.client.get_connections():
                 if conn.get_connection_type() == "802-11-wireless":
@@ -490,18 +520,21 @@ class WifiWindow(Gtk.Window):
             row = Gtk.ListBoxRow()
             row_data = {"device": dev, "ap": ap, "ssid": ssid, "is_secure": is_secure, "existing_conn": existing_conn}
             row.ap_data = row_data
-            
+
             row_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
             hbox.set_border_width(8)
-            
+
             icon = Gtk.Image.new_from_icon_name(self._get_icon_name(strength), Gtk.IconSize.DND)
             label = Gtk.Label(label=ssid)
             label.set_xalign(0.0)
-            
+
+            band_badge = self._create_band_badge(ap.get_frequency())
+
             hbox.pack_start(icon, False, False, 0)
             hbox.pack_start(label, True, True, 0)
-            
+            hbox.pack_end(band_badge, False, False, 0)
+
             if existing_conn:
                 btn_forget = Gtk.Button.new_from_icon_name("user-trash-symbolic", Gtk.IconSize.MENU)
                 btn_forget.set_relief(Gtk.ReliefStyle.NONE)
@@ -511,48 +544,65 @@ class WifiWindow(Gtk.Window):
             elif is_secure:
                 lock_icon = Gtk.Image.new_from_icon_name("network-wireless-encrypted-symbolic", Gtk.IconSize.MENU)
                 hbox.pack_end(lock_icon, False, False, 0)
-                
+
             row_vbox.pack_start(hbox, False, False, 0)
-            
+
             revealer = Gtk.Revealer()
             revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
             revealer.set_transition_duration(250)
-            
+
             auth_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
             auth_box.set_margin_start(35)
             auth_box.set_margin_end(10)
             auth_box.set_margin_bottom(10)
-            
+
             entry = Gtk.Entry()
             entry.set_visibility(False)
             entry.set_placeholder_text("Password")
-            entry.set_width_chars(8) 
-            
+            entry.set_width_chars(8)
+
             btn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             btn_connect = Gtk.Button(label="Connect")
             btn_cancel = Gtk.Button(label="Cancel")
             btn_connect.get_style_context().add_class("suggested-action")
-            
+
             btn_box.pack_start(btn_cancel, False, False, 0)
             btn_box.pack_start(btn_connect, False, False, 0)
-            
+
             auth_box.pack_start(entry, False, False, 0)
             auth_box.pack_start(btn_box, False, False, 0)
             revealer.add(auth_box)
-            
+
             row_vbox.pack_start(revealer, False, False, 0)
             row.add(row_vbox)
-            
+
             row_data["revealer"] = revealer
             row_data["entry"] = entry
-            
+
             entry.connect("activate", self.on_inline_connect_clicked, row_data)
             btn_connect.connect("clicked", self.on_inline_connect_clicked, row_data)
             btn_cancel.connect("clicked", self.on_inline_cancel_clicked, row_data)
-            
+
             self.listbox.add(row)
-            
+
         self.listbox.show_all()
+
+    def _create_band_badge(self, freq):
+        if freq is None or freq <= 0:
+            label = "?"
+        elif freq >= 5900:
+            label = "6 GHz"
+        elif freq >= 4000:
+            label = "5 GHz"
+        elif freq >= 2400:
+            label = "2.4 GHz"
+        else:
+            label = "?"
+
+        badge = Gtk.Label(label=label)
+        badge.get_style_context().add_class("band-tag")
+        badge.set_tooltip_text(label)
+        return badge
 
     def on_forget_clicked(self, button, conn):
         conn.delete_async(None, self.on_deleted, None)
