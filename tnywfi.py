@@ -270,8 +270,13 @@ class WifiWindow(Gtk.Window):
         self.status_eventbox.add(status_box)
         
         self.btn_disconnect = Gtk.Button()
-        img = Gtk.Image.new_from_icon_name("process-stop-symbolic", Gtk.IconSize.BUTTON)
+        self.btn_disconnect.set_name("disconnect-button")
+        self.btn_disconnect.set_relief(Gtk.ReliefStyle.NONE)
+        self.btn_disconnect.set_size_request(32, 32)
+        img = Gtk.Image.new_from_icon_name("network-disconnect-symbolic", Gtk.IconSize.BUTTON)
+        img.set_pixel_size(18)
         self.btn_disconnect.set_image(img)
+        self.btn_disconnect.set_always_show_image(True)
         self.btn_disconnect.set_tooltip_text("Disconnect")
         self.btn_disconnect.set_valign(Gtk.Align.CENTER)
         self.btn_disconnect.connect("clicked", self.on_disconnect_clicked)
@@ -317,6 +322,17 @@ class WifiWindow(Gtk.Window):
         css = b"""
         button { border-radius: 9px; min-width: 70px; }
         entry { border-radius: 9px; }
+
+        #disconnect-button {
+            min-width: 32px;
+            min-height: 32px;
+            padding: 0;
+            border-radius: 9px;
+            color: #e74c3c;
+        }
+        #disconnect-button:hover {
+            background-color: rgba(231, 76, 60, 0.15);
+        }
         
         #network-list { 
             background-color: #2e2e2e; 

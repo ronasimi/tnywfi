@@ -33,3 +33,9 @@ python3 tnywfi.py
 ```
 
 The app relies on NetworkManager being available and running on your system.
+
+## Screenshots
+
+![Connection details view](screenshots/details.png)
+
+![Network picker view](screenshots/picker.png)
