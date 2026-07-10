@@ -36,6 +36,6 @@ The app relies on NetworkManager being available and running on your system.
 
 ## Screenshots
 
-![Connection details view](screenshots/details.png)
+![Connection details view](screenshots/picker.png)
 
-![Network picker view](screenshots/picker.png)
+![Network picker view](screenshots/details.png)
