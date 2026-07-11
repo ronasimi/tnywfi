@@ -1,7 +1,7 @@
 # Maintainer: Your Name <you@example.com>
 
-pkgname=tnywfi
-pkgver=0.1.0
+pkgname=tnywfi-git
+pkgver=0.1.0.r0.g0000000
 pkgrel=1
 pkgdesc="A simple GTK 3 Wi-Fi applet for NetworkManager"
 arch=('any')
