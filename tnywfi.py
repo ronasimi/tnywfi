@@ -13,7 +13,7 @@ from gi.repository import Gtk, NM, GLib, Gdk, Pango
 class ConnectionDetailsDialog(Gtk.Dialog):
     def __init__(self, parent_app, device, ap, ssid, connection):
         super().__init__(title="Connection Info")
-        self.set_default_size(280, 300)
+        self.set_default_size(480, 450)
         self.set_border_width(12)
         self.set_wmclass("tnywfi-dialog", "tnywfi-dialog")
         
@@ -379,7 +379,7 @@ class ConnectionDetailsDialog(Gtk.Dialog):
 class WifiWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title="tnywfi")
-        self.set_default_size(175, 450)
+        self.set_default_size(480, 450)
         self.set_border_width(10)
         self.set_position(Gtk.WindowPosition.CENTER)
         self.set_wmclass("tnywfi", "tnywfi")
@@ -542,7 +542,7 @@ class WifiWindow(Gtk.Window):
         if self._network_refresh_scheduled:
             return
         self._network_refresh_scheduled = True
-        GLib.timeout_add(1000, self._run_scheduled_network_refresh)
+        GLib.timeout_add(5000, self._run_scheduled_network_refresh)
 
     def _run_scheduled_network_refresh(self):
         self._network_refresh_scheduled = False
@@ -686,13 +686,21 @@ class WifiWindow(Gtk.Window):
         aps = dev.get_access_points()
         seen_ssids = set()
         ap_list = []
+        bands_by_ssid = {}
 
         for ap in aps:
             ssid_b = ap.get_ssid()
             if not ssid_b:
                 continue
             ssid = ssid_b.get_data().decode('utf-8', errors='ignore')
-            if not ssid or ssid in seen_ssids:
+            if not ssid:
+                continue
+
+            band_key = self._get_band_key(ap.get_frequency())
+            if band_key:
+                bands_by_ssid.setdefault(ssid, set()).add(band_key)
+
+            if ssid in seen_ssids:
                 continue
             seen_ssids.add(ssid)
             ap_list.append(ap)
@@ -742,21 +750,44 @@ class WifiWindow(Gtk.Window):
             label = Gtk.Label(label=ssid)
             label.set_xalign(0.0)
 
-            band_badge = self._create_band_badge(ap.get_frequency())
-
             hbox.pack_start(icon, False, False, 0)
             hbox.pack_start(label, True, True, 0)
-            hbox.pack_end(band_badge, False, False, 0)
+
+            trailing_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+            trailing_box.set_halign(Gtk.Align.END)
+            trailing_box.set_valign(Gtk.Align.CENTER)
+
+            action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+            action_box.set_size_request(16, 16)
+
+            band_label = self._create_band_label(bands_by_ssid.get(ssid, set()))
+            if band_label is not None:
+                action_box.pack_start(band_label, False, False, 0)
 
             if existing_conn:
-                btn_forget = Gtk.Button.new_from_icon_name("edit-clear-symbolic", Gtk.IconSize.MENU)
-                btn_forget.set_relief(Gtk.ReliefStyle.NONE)
-                btn_forget.set_tooltip_text("Forget Network")
-                btn_forget.connect("clicked", self.on_forget_clicked, existing_conn)
-                hbox.pack_end(btn_forget, False, False, 0)
+                forget_icon = Gtk.Image.new_from_icon_name("user-trash-symbolic", Gtk.IconSize.MENU)
+                forget_icon.set_halign(Gtk.Align.CENTER)
+                forget_icon.set_valign(Gtk.Align.CENTER)
+                forget_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+                forget_box.pack_start(forget_icon, True, True, 0)
+                forget_widget = Gtk.EventBox()
+                forget_widget.add(forget_box)
+                forget_widget.set_visible_window(False)
+                forget_widget.set_above_child(True)
+                forget_widget.set_tooltip_text("Forget Network")
+                forget_widget.connect("button-press-event", lambda widget, event, conn=existing_conn: self.on_forget_clicked(widget, conn) if event.button == 1 else None)
+                action_box.pack_start(forget_widget, False, False, 0)
             elif is_secure:
                 lock_icon = Gtk.Image.new_from_icon_name("network-wireless-encrypted-symbolic", Gtk.IconSize.MENU)
-                hbox.pack_end(lock_icon, False, False, 0)
+                lock_icon.set_halign(Gtk.Align.CENTER)
+                lock_icon.set_valign(Gtk.Align.CENTER)
+                lock_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+                lock_box.pack_start(lock_icon, True, True, 0)
+                action_box.pack_start(lock_box, False, False, 0)
+
+            trailing_box.pack_end(action_box, False, False, 0)
+
+            hbox.pack_end(trailing_box, False, False, 0)
 
             row_vbox.pack_start(hbox, False, False, 0)
 
@@ -800,22 +831,35 @@ class WifiWindow(Gtk.Window):
 
         self.listbox.show_all()
 
-    def _create_band_badge(self, freq):
+    def _get_band_key(self, freq):
         if freq is None or freq <= 0:
-            label = "?"
-        elif freq >= 5900:
-            label = "6 GHz"
-        elif freq >= 4000:
-            label = "5 GHz"
-        elif freq >= 2400:
-            label = "2.4 GHz"
-        else:
-            label = "?"
+            return None
+        if freq >= 5900:
+            return "6"
+        if freq >= 4000:
+            return "5"
+        if freq >= 2400:
+            return "2.4"
+        return None
 
-        badge = Gtk.Label(label=label)
-        badge.get_style_context().add_class("band-tag")
-        badge.set_tooltip_text(label)
-        return badge
+    def _create_band_label(self, freq_or_bands):
+        if isinstance(freq_or_bands, (set, list, tuple)):
+            band_keys = [band for band in freq_or_bands if band]
+            if not band_keys:
+                return None
+            band_keys = sorted(band_keys, key=lambda band: {"2.4": 0, "5": 1, "6": 2}.get(band, 99))
+            label = "/".join(band_keys)
+        else:
+            label = self._get_band_key(freq_or_bands)
+            if label is None:
+                return None
+
+        band_label = Gtk.Label(label=label)
+        band_label.get_style_context().add_class("band-tag")
+        band_label.set_tooltip_text(label)
+        band_label.set_margin_start(3)
+        band_label.set_markup(f"<span size='small' rise='-1000' weight='bold'>{GLib.markup_escape_text(label)}</span>")
+        return band_label
 
     def on_forget_clicked(self, button, conn):
         conn.delete_async(None, self.on_deleted, None)

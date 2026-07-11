@@ -2,7 +2,7 @@
 
 pkgname=tnywfi-git
 pkgver=0.1.0.r0.g0000000
-pkgrel=1
+pkgrel=2
 pkgdesc="A simple GTK 3 Wi-Fi applet for NetworkManager"
 arch=('any')
 url="https://github.com/ronasimi/tnywfi"
@@ -14,15 +14,15 @@ depends=(
   'networkmanager'
   'polkit'
 )
+makedepends=('curl')
 source=(
-  "tnywfi.py::https://raw.githubusercontent.com/ronasimi/tnywfi/master/tnywfi.py"
-  "README.md::https://raw.githubusercontent.com/ronasimi/tnywfi/master/README.md"
+  "tnywfi.py::file://$startdir/tnywfi.py"
+  "README.md::file://$startdir/README.md"
 )
-# SHA-256 checksums for the current GitHub master sources
-sha256sums=('5088ec2bfe5faa57a2f6b9a06babd191196527f8d209df661dab77e18adec594'
-            'c1a186ab307b6830c91ae8bef904f5ad7cbb3e97520989125d96a7b916b4cb98')
 
 package() {
   install -Dm755 "$srcdir/tnywfi.py" "$pkgdir/usr/bin/tnywfi"
   install -Dm644 "$srcdir/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
 }
+sha256sums=('91450dacfe748b2b40a2282fae5329afba23b5cbcad9e8a961456baf0d752bf2'
+            'c1a186ab307b6830c91ae8bef904f5ad7cbb3e97520989125d96a7b916b4cb98')
