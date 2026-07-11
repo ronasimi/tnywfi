@@ -1,4 +1,6 @@
 __pycache__/
 *.py[cod]
+*.pkg.tar.zst
+*.pkg.tar.zst.sig
 
 pkg/
