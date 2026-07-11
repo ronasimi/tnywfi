@@ -18,6 +18,7 @@ source=(
   "tnywfi.py::https://raw.githubusercontent.com/ronasimi/tnywfi/master/tnywfi.py"
   "README.md::https://raw.githubusercontent.com/ronasimi/tnywfi/master/README.md"
 )
+# SHA-256 checksums for the current GitHub master sources
 sha256sums=('5088ec2bfe5faa57a2f6b9a06babd191196527f8d209df661dab77e18adec594'
             'c1a186ab307b6830c91ae8bef904f5ad7cbb3e97520989125d96a7b916b4cb98')
 
