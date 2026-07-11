@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import re
 import sys
 import uuid
 import threading
@@ -49,6 +50,8 @@ class ConnectionDetailsDialog(Gtk.Dialog):
         self.lbl_dl = Gtk.Label(xalign=0.0)
         self.lbl_ul = Gtk.Label(xalign=0.0)
         self.lbl_sec = Gtk.Label(xalign=0.0)
+        self.lbl_network = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.lbl_network.set_halign(Gtk.Align.START)
         
         s_wsec = self.connection.get_setting_wireless_security() if self.connection else None
         
@@ -80,6 +83,8 @@ class ConnectionDetailsDialog(Gtk.Dialog):
         add_row(grid, 4, "Upload:", self.lbl_ul)
         add_row(grid, 5, "Security:", self.lbl_sec)
         add_row(grid, 6, "Password:", self.pw_button)
+        grid.attach(Gtk.Label(label="Network:"), 0, 7, 1, 1)
+        grid.attach(self.lbl_network, 1, 7, 1, 1)
         
         vbox.pack_start(grid, True, True, 0)
         
@@ -101,6 +106,7 @@ class ConnectionDetailsDialog(Gtk.Dialog):
         self.connect("response", self.on_response)
         
         self.update_stats()
+        self.update_network_info()
         self.show_all()
 
     def on_password_clicked(self, button):
@@ -172,7 +178,151 @@ class ConnectionDetailsDialog(Gtk.Dialog):
         if bps < 1024: return f"{bps:.0f} B/s"
         elif bps < 1024**2: return f"{bps/1024:.1f} KB/s"
         else: return f"{bps/(1024**2):.2f} MB/s"
-        
+
+    def _format_duration(self, seconds):
+        try:
+            seconds = int(seconds)
+        except (TypeError, ValueError):
+            return str(seconds)
+        if seconds < 60:
+            return f"{seconds}s"
+        if seconds < 3600:
+            return f"{seconds // 60}m"
+        return f"{seconds // 3600}h {seconds % 3600 // 60}m"
+
+    def _get_interface_addresses(self, version):
+        cmd = ["ip", "-o", f"-{version}", "addr", "show", "dev", self.iface]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                return []
+            addresses = []
+            for line in result.stdout.splitlines():
+                match = re.search(rf"{'inet' if version == '4' else 'inet6'}\s+([0-9A-Fa-f:.]+)", line)
+                if match:
+                    addresses.append(match.group(1))
+            return addresses
+        except Exception:
+            return []
+
+    def _get_interface_gateways(self, version):
+        cmd = ["ip", "-o", f"-{version}", "route", "show", "default", "dev", self.iface]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                return []
+            gateways = []
+            for line in result.stdout.splitlines():
+                match = re.search(r"via\s+([0-9A-Fa-f:.]+)", line)
+                if match:
+                    gateways.append(match.group(1))
+            return gateways
+        except Exception:
+            return []
+
+    def _get_dns_servers(self):
+        servers = []
+
+        try:
+            result = subprocess.run(["resolvectl", "dns", self.iface], capture_output=True, text=True, check=False)
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        server = parts[-1]
+                        if re.match(r"^([0-9]{1,3}\.){3}[0-9]{1,3}$", server) or ":" in server:
+                            servers.append(server)
+        except Exception:
+            pass
+
+        if servers:
+            return servers
+
+        try:
+            conn_uuid = self.connection.get_uuid() if self.connection else None
+            if conn_uuid:
+                result = subprocess.run(["nmcli", "-g", "IP4.DNS,IP6.DNS", "connection", "show", conn_uuid], capture_output=True, text=True, check=False)
+                if result.returncode == 0:
+                    for line in result.stdout.splitlines():
+                        for part in line.split():
+                            if re.match(r"^([0-9]{1,3}\.){3}[0-9]{1,3}$", part) or ":" in part:
+                                servers.append(part)
+        except Exception:
+            pass
+
+        if servers:
+            return servers
+
+        try:
+            result = subprocess.run(["nmcli", "-g", "IP4.DNS,IP6.DNS", "device", "show", self.iface], capture_output=True, text=True, check=False)
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    for part in line.split():
+                        if re.match(r"^([0-9]{1,3}\.){3}[0-9]{1,3}$", part) or ":" in part:
+                            servers.append(part)
+        except Exception:
+            pass
+
+        return servers
+
+    def _get_dhcp_lease(self):
+        for field in ("dhcp4.lease-time", "dhcp6.lease-time"):
+            try:
+                result = subprocess.run(["nmcli", "-g", field, "device", "show", self.iface], capture_output=True, text=True, check=False)
+                if result.returncode == 0 and result.stdout.strip():
+                    value = result.stdout.strip().splitlines()[0].strip()
+                    if value:
+                        return self._format_duration(value)
+            except Exception:
+                continue
+        return None
+
+    def update_network_info(self):
+        for child in self.lbl_network.get_children():
+            self.lbl_network.remove(child)
+
+        ipv4 = self._get_interface_addresses("4")
+        ipv6 = self._get_interface_addresses("6")
+        ipv4_gateway = self._get_interface_gateways("4")
+        ipv6_gateway = self._get_interface_gateways("6")
+        dns_servers = self._get_dns_servers()
+        lease = self._get_dhcp_lease()
+
+        blocks = []
+        if ipv4:
+            details = ["Addresses: " + ", ".join(ipv4)]
+            if ipv4_gateway:
+                details.append("Gateway: " + ", ".join(ipv4_gateway))
+            blocks.append(("IPv4", details))
+        if ipv6:
+            details = ["Addresses: " + ", ".join(ipv6)]
+            if ipv6_gateway:
+                details.append("Gateway: " + ", ".join(ipv6_gateway))
+            blocks.append(("IPv6", details))
+        if dns_servers:
+            blocks.append(("DNS", [", ".join(dns_servers)]))
+        if lease:
+            blocks.append(("Lease", [lease]))
+
+        if not blocks:
+            placeholder = Gtk.Label(label="No IP information")
+            placeholder.set_xalign(0.0)
+            placeholder.set_line_wrap(True)
+            placeholder.set_selectable(True)
+            placeholder.set_markup("<span size='small'>No IP information</span>")
+            self.lbl_network.pack_start(placeholder, False, False, 0)
+        else:
+            for title, details in blocks:
+                block = Gtk.Label()
+                body = "\n".join(details)
+                block.set_markup(f"<span size='small'><b>{title}</b>\n{body}</span>")
+                block.set_xalign(0.0)
+                block.set_line_wrap(True)
+                block.set_selectable(True)
+                self.lbl_network.pack_start(block, False, False, 0)
+
+        self.lbl_network.show_all()
+
     def update_stats(self):
         freq = self.ap.get_frequency()
         band = f"{freq} MHz"
@@ -236,6 +386,8 @@ class WifiWindow(Gtk.Window):
 
         self.client = NM.Client.new(None)
         self._apply_css()
+        self._refresh_timeout_id = None
+        self._network_refresh_scheduled = False
         
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self.add(vbox)
@@ -312,12 +464,13 @@ class WifiWindow(Gtk.Window):
         bbox.add(btn_quit)
         vbox.pack_start(bbox, False, False, 0)
 
-        self.update_status()
-        self.refresh_available_networks()
-        
-        self.client.connect("notify::active-connections", lambda *args: self.update_status())
-        GLib.timeout_add_seconds(3, self.update_status)
+        self._refresh_all()
+        self._connect_device_signals()
+        self.client.connect("notify::active-connections", lambda *args: self._refresh_all())
+        self.client.connect("notify::connections", lambda *args: self._schedule_network_refresh())
+        self.client.connect("notify::state", lambda *args: self._refresh_all())
         self.connect("key-press-event", self.on_key_press)
+        GLib.idle_add(self._refresh_networks_immediately)
 
     def on_key_press(self, widget, event):
         if event.keyval == Gdk.KEY_Escape:
@@ -367,6 +520,39 @@ class WifiWindow(Gtk.Window):
             Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
 
+    def _connect_device_signals(self):
+        dev = self._get_wifi_device()
+        if not dev:
+            return
+
+        dev.connect("state-changed", self._on_device_changed)
+        dev.connect("access-point-added", self._on_device_changed)
+        dev.connect("access-point-removed", self._on_device_changed)
+        dev.connect("notify::active-access-point", self._on_device_changed)
+
+    def _on_device_changed(self, *args):
+        GLib.idle_add(self._refresh_all)
+
+    def _refresh_all(self):
+        self.update_status()
+        self._schedule_network_refresh()
+        return True
+
+    def _schedule_network_refresh(self):
+        if self._network_refresh_scheduled:
+            return
+        self._network_refresh_scheduled = True
+        GLib.timeout_add(1000, self._run_scheduled_network_refresh)
+
+    def _run_scheduled_network_refresh(self):
+        self._network_refresh_scheduled = False
+        self.refresh_available_networks()
+        return False
+
+    def _refresh_networks_immediately(self):
+        self.refresh_available_networks()
+        return False
+
     def _get_wifi_device(self):
         for dev in self.client.get_devices():
             if dev.get_device_type() == NM.DeviceType.WIFI:
@@ -379,6 +565,24 @@ class WifiWindow(Gtk.Window):
         if strength >= 40: return "network-wireless-signal-ok-symbolic"
         if strength >= 20: return "network-wireless-signal-weak-symbolic"
         return "network-wireless-signal-none-symbolic"
+
+    def _get_interface_addresses(self, dev, version):
+        iface = dev.get_iface() if dev else None
+        if not iface:
+            return []
+        cmd = ["ip", "-o", f"-{version}", "addr", "show", "dev", iface]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                return []
+            addresses = []
+            for line in result.stdout.splitlines():
+                match = re.search(rf"{'inet' if version == '4' else 'inet6'}\s+([0-9A-Fa-f:.]+)", line)
+                if match:
+                    addresses.append(match.group(1))
+            return addresses
+        except Exception:
+            return []
 
     def update_status(self):
         dev = self._get_wifi_device()
@@ -399,10 +603,19 @@ class WifiWindow(Gtk.Window):
                 freq = ap.get_frequency()
                 band = "6 GHz" if freq > 5900 else ("5 GHz" if freq > 4000 else "2.4 GHz")
                 bitrate = ap.get_max_bitrate() / 1000
+                strength = ap.get_strength()
                 
-                markup = f"<span foreground='#8ab4f8' size='larger'><b>{escaped_ssid}</b></span>\n<small>{band}  |  {bitrate:.0f} Mbps</small>"
+                ip_text = "No IP"
+                ipv4 = self._get_interface_addresses(dev, "4")
+                ipv6 = self._get_interface_addresses(dev, "6")
+                if ipv4:
+                    ip_text = ipv4[0]
+                elif ipv6:
+                    ip_text = ipv6[0]
+
+                markup = f"<span foreground='#8ab4f8' size='larger'><b>{escaped_ssid}</b></span>\n<small>{band} | {bitrate:.0f} Mbps | {strength}% | {ip_text}</small>"
                 self.status_label.set_markup(markup)
-                self.status_icon.set_from_icon_name(self._get_icon_name(ap.get_strength()), Gtk.IconSize.DIALOG)
+                self.status_icon.set_from_icon_name(self._get_icon_name(strength), Gtk.IconSize.DIALOG)
             else:
                 self.status_label.set_markup("<span foreground='#8ab4f8' size='larger'><b>Connected</b></span>\n<small>No AP Info</small>")
                 self.status_icon.set_from_icon_name("network-wireless-connected-symbolic", Gtk.IconSize.DIALOG)
@@ -536,7 +749,7 @@ class WifiWindow(Gtk.Window):
             hbox.pack_end(band_badge, False, False, 0)
 
             if existing_conn:
-                btn_forget = Gtk.Button.new_from_icon_name("user-trash-symbolic", Gtk.IconSize.MENU)
+                btn_forget = Gtk.Button.new_from_icon_name("edit-clear-symbolic", Gtk.IconSize.MENU)
                 btn_forget.set_relief(Gtk.ReliefStyle.NONE)
                 btn_forget.set_tooltip_text("Forget Network")
                 btn_forget.connect("clicked", self.on_forget_clicked, existing_conn)
