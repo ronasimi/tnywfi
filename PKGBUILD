@@ -14,11 +14,14 @@ depends=(
   'networkmanager'
   'polkit'
 )
-source=("$pkgname::https://github.com/ronasimi/tnywfi/archive/refs/heads/main.tar.gz")
-sha256sums=('SKIP')
+source=(
+  "tnywfi.py::https://raw.githubusercontent.com/ronasimi/tnywfi/master/tnywfi.py"
+  "README.md::https://raw.githubusercontent.com/ronasimi/tnywfi/master/README.md"
+)
+sha256sums=('5088ec2bfe5faa57a2f6b9a06babd191196527f8d209df661dab77e18adec594'
+            'c1a186ab307b6830c91ae8bef904f5ad7cbb3e97520989125d96a7b916b4cb98')
 
 package() {
-  cd "$srcdir/$pkgname-main"
-  install -Dm755 tnywfi.py "$pkgdir/usr/bin/tnywfi"
-  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm755 "$srcdir/tnywfi.py" "$pkgdir/usr/bin/tnywfi"
+  install -Dm644 "$srcdir/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
 }
